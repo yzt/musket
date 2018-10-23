@@ -3,6 +3,7 @@
 #include <GLFW/glfw3.h>
 #include <Windows.h>
 #include <iostream>
+#include "Mesh.h"
 
 namespace GameFramework
 {
@@ -65,6 +66,11 @@ namespace GameFramework
 		m_Window = window;
 
 		return true;
+	}
+
+	Mesh * Framework::CreateMesh(MeshCreateInfo & Info)
+	{
+		return nullptr;
 	}
 
 	void Framework::Run(void)
