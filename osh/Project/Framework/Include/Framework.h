@@ -19,7 +19,7 @@ namespace GameFramework
 		float X, Y, Z;
 	};
 
-	class MeshCreateInfo
+	class FRAMEWORK_API MeshCreateInfo
 	{
 		//Vertex
 		// Position : x, y, z

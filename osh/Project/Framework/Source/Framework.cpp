@@ -70,7 +70,42 @@ namespace GameFramework
 
 	Mesh * Framework::CreateMesh(MeshCreateInfo & Info)
 	{
-		return nullptr;
+		unsigned int vao;
+		glGenVertexArrays(1, &vao);
+		glBindVertexArray(vao);
+
+		unsigned int elementSize = sizeof(Vector3) + sizeof(Vector2);
+		unsigned int bufferSize = Info.VertexCount * elementSize;
+		float *buffer = reinterpret_cast<float*>(malloc(bufferSize));
+
+		for (int i = 0; i < Info.VertexCount; ++i)
+		{
+			int bufferIndex = i * elementSize;
+			memcpy(buffer + bufferIndex, Info.Positions + i, sizeof(Vector3));
+
+			bufferIndex += sizeof(Vector3);
+			memcpy(buffer + bufferIndex, Info.Positions + i, sizeof(Vector2));
+		}
+
+		unsigned int vbo;
+		glGenBuffers(1, &vbo);
+		glBindBuffer(GL_VERTEX_ARRAY, vbo);
+		glBufferData(GL_VERTEX_ARRAY, bufferSize, buffer, GL_STATIC_DRAW);
+
+		unsigned int ebo;
+		glGenBuffers(1, &ebo);
+		glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo);
+		glBufferData(GL_ELEMENT_ARRAY_BUFFER, Info.IndexCount * sizeof(float), Info.Indices, GL_STATIC_DRAW);
+
+		glVertexAttribPointer(0, 3, GL_FLOAT, false, 0, (void*)0);
+		glEnableVertexAttribArray(0);
+
+		glVertexAttribPointer(1, 2, GL_FLOAT, false, 0, (void*)sizeof(Vector3));
+		glEnableVertexAttribArray(0);
+
+
+
+			return nullptr;
 	}
 
 	void Framework::Run(void)
