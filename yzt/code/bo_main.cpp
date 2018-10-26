@@ -1,99 +1,46 @@
 #include <sdl2/SDL.h>
-#include <cmath>
 #include <cstdio>
+//#include <thread>
 
 using byte = unsigned char;
 
-struct Color {
-    byte b, g, r, a;
-
-    Color (byte r_, byte g_, byte b_, byte a_ = 255) : r (r_), g (g_), b (b_), a (a_) {}
-};
-
-struct Canvas {
-    void * pixels_raw;
-    int pitch_bytes;
-    int width, height;
-
-    Color * pixel(int x, int y) {return (Color *)((byte *)pixels_raw + y * (size_t)pitch_bytes + x * sizeof(Color));}
-};
-
-void Render_Pixel (Canvas * canvas, int x, int y, Color c) {
-    if (canvas && x >= 0 && y >= 0 && x < canvas->width && y < canvas->height)
-        *canvas->pixel(x, y) = c;
-}
-
-void Render_LineHoriz_Unchecked (Canvas * canvas, int x0, int x1, int y, Color c) {
-    Color * p = canvas->pixel(x0, y);
-    for (int i = x1 - x0; i >= 0; --i, ++p)
-        *p = c;
-}
-
-void Render_LineHoriz (Canvas * canvas, int x0, int x1, int y, Color c) {
-    if (canvas && y >= 0 && y < canvas->height) {
-        if (x1 < x0) {auto t = x0; x0 = x1; x1 = t;}
-        if (x0 < 0) x0 = 0;
-        if (x1 > canvas->width - 1) x1 = canvas->width - 1;
-        if (x0 <= x1)
-            Render_LineHoriz_Unchecked(canvas, x0, x1, y, c);
-    }
-}
-
-void Render_AAB (Canvas * canvas, int x0, int y0, int w, int h, Color c) {
-    if (canvas && w > 0 && h > 0 && x0 < canvas->width && y0 < canvas->height && x0 + w >= 0 && y0 + h >= 0) {
-        if (x0 < 0) {w += x0; x0 = 0;}
-        if (y0 < 0) {h += y0; y0 = 0;}
-        if (x0 + w >= canvas->width) {w -= x0 + w - canvas->width;}
-        if (y0 + h >= canvas->height) {h -= y0 + h - canvas->height;}
-
-        Color * p = canvas->pixel(x0, y0);
-        for (int i = 0; i < h; ++i, p = (Color *)((byte *)p + canvas->pitch_bytes)) {
-            Color * q = p;
-            for (int j = 0; j < w; ++q, ++j) {
-                *q = c;
-            }
-        }
-    }
-}
-
-void Render_Clear (Canvas * canvas, Color c) {
-    Render_AAB(canvas, 0, 0, canvas->width, canvas->height, c);
-}
-
-void Render_Circle (Canvas * canvas, int x, int y, int r, Color c) {
-    if (canvas && r >= 0) {
-        for (int ey = r - 1; ey > 0; --ey) {
-            int ex = int(0.5f + sqrtf(float(r * r - ey * ey)));
-            Render_LineHoriz(canvas, x - ex, x + ex, y + ey, c);
-            Render_LineHoriz(canvas, x - ex, x + ex, y - ey, c);
-        }
-        Render_LineHoriz(canvas, x - r, x + r, y, c);
-        Render_Pixel(canvas, x, y + r, c);
-        Render_Pixel(canvas, x, y - r, c);
-    }
-}
+#include "bo_math.hpp"
+#include "bo_render.hpp"
 
 int main (int argc, char * argv []) {
+    float state_movement = 0.0f;  // in [-1..1]
+    bool state_ball_moving = false;
+    Point state_paddle_pos = {};
+    Point state_ball_pos = {};
+    Vec2 state_ball_dir = {};
+    bool input_left = false;
+    bool input_right = false;
+    bool input_action = false;
+    bool input_exit = false;
+
+    float config_paddle_default_speed = 750.0f;
+    int config_paddle_default_width = 150;
+    int config_paddle_default_height = 30;
+    float config_paddle_default_y = 0.90f;
+    float config_ball_default_radius = 10.0f;
+    float config_ball_default_speed = 100000.0f;
+    int config_target_fps = 1200;
+    int config_window_height = 960;
+    float config_aspect_ratio = 3.0f / 4.0f;   //9.0f / 16;
+
+    state_paddle_pos.y = config_paddle_default_y * config_window_height;
+
     SDL_Init(SDL_INIT_VIDEO);
 
     SDL_Window * window = nullptr;
     SDL_Renderer * renderer = nullptr;
-    SDL_CreateWindowAndRenderer(1280, 720, 0 /*| SDL_WINDOW_FULLSCREEN*/, &window, &renderer);
-
-    SDL_SetRenderDrawColor(renderer, 142, 0, 0, 255);
+    SDL_CreateWindowAndRenderer(int(config_window_height * config_aspect_ratio + 0.5f), config_window_height, 0 /*| SDL_WINDOW_FULLSCREEN*/, &window, &renderer);
+    SDL_SetWindowTitle(window, "BrykOut");
 
     int window_width = 0, window_height = 0;
     SDL_GetWindowSize(window, &window_width, &window_height);
     SDL_Texture * tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, window_width, window_height);
     SDL_assert(tex);
-
-    float paddle_x = 0;
-    float paddle_speed = 500.0f;
-    float movement = 0.0f;  // in [-1..1]
-    bool input_left = false;
-    bool input_right = false;
-    bool input_exit = false;
-    int config_target_fps = 60;
 
     double target_frame_time_s = 1.0 / config_target_fps;
     double const inv_pfc_freq = 1.0 / SDL_GetPerformanceFrequency();
@@ -102,55 +49,76 @@ int main (int argc, char * argv []) {
     SDL_Event ev = {};
     unsigned t0 = SDL_GetTicks();
     unsigned frame_count = 0;
+    double wastage = 0;
     while (!input_exit) {
         // Process pending events...
+        input_action = false;
+        input_exit = false;
         while (SDL_PollEvent(&ev)) {
             switch (ev.type) {
             case SDL_KEYDOWN:
                 switch (ev.key.keysym.sym) {
-                case SDLK_a:
-                case SDLK_LEFT:
-                    input_left = true;
-                    break;
-                case SDLK_d:
-                case SDLK_RIGHT:
-                    input_right = true;
-                    break;
+                case SDLK_SPACE: input_action = true; break;
+                case SDLK_a: case SDLK_LEFT: input_left = true; break;
+                case SDLK_d: case SDLK_RIGHT: input_right = true; break;
                 }
                 break;
             case SDL_KEYUP:
                 switch (ev.key.keysym.sym) {
-                case SDLK_ESCAPE:
-                    input_exit = true;
-                    break;
-                case SDLK_a:
-                case SDLK_LEFT:
-                    input_left = false;
-                    break;
-                case SDLK_d:
-                case SDLK_RIGHT:
-                    input_right = false;
-                    break;
+                case SDLK_ESCAPE: input_exit = true; break;
+                case SDLK_a: case SDLK_LEFT: input_left = false; break;
+                case SDLK_d: case SDLK_RIGHT: input_right = false; break;
                 }
                 break;
             case SDL_QUIT:
                 input_exit = true;
-                break;
-            default:
                 break;
             }
         }
 
         // Process the input...
         if (input_left && !input_right)
-            movement = -1.0f;
+            state_movement = -1.0f;
         else if (input_right && !input_left)
-            movement = 1.0f;
+            state_movement = 1.0f;
         else
-            movement = 0.0f;
+            state_movement = 0.0f;
+
+        if (input_action && !state_ball_moving) {
+            state_ball_moving = true;
+            state_ball_dir = Normalized({state_movement < 0 ? -1.0f : 1.0f, -1.0f});
+        }
 
         // Do the update...
-        paddle_x += movement * paddle_speed * float(target_frame_time_s);
+        state_paddle_pos.x += state_movement * config_paddle_default_speed * float(target_frame_time_s);
+        if (!state_ball_moving) {
+            state_ball_pos = state_paddle_pos + Vec2{config_paddle_default_width / 2.0f, -config_ball_default_radius};
+        } else {
+            auto ball_final_pos = state_ball_pos + state_ball_dir * (config_ball_default_speed * float(target_frame_time_s));
+
+            // Detect and handle collisions...
+            Point wall_min = {0, 0};
+            Point wall_max = {Real(window_width), Real(window_height)};
+
+            wall_min += config_ball_default_radius;
+            wall_max -= config_ball_default_radius;
+
+            if (ball_final_pos.x < wall_min.x)
+                if (state_ball_dir.x < 0)
+                    state_ball_dir.x = -state_ball_dir.x;
+            if (ball_final_pos.y < wall_min.y)
+                if (state_ball_dir.y < 0)
+                    state_ball_dir.y = -state_ball_dir.y;
+            if (ball_final_pos.x > wall_max.x)
+                if (state_ball_dir.x > 0)
+                    state_ball_dir.x = -state_ball_dir.x;
+            if (ball_final_pos.y > wall_max.y)
+                if (state_ball_dir.y > 0)
+                    state_ball_dir.y = -state_ball_dir.y;
+
+            state_ball_pos = ball_final_pos;
+        }
+
 
         // Do the render...
         Canvas canvas = {};
@@ -160,6 +128,7 @@ int main (int argc, char * argv []) {
 
         Render_Clear(&canvas, {0, 0, 0});
 
+    #if 0
         *canvas.pixel(100, 50) = Color{255, 255, 0};
         *canvas.pixel(101, 50) = Color{255, 255, 0};
         *canvas.pixel(102, 50) = Color{255, 255, 0};
@@ -177,10 +146,23 @@ int main (int argc, char * argv []) {
         *canvas.pixel(102, 53) = Color{255, 255, 0};
         *canvas.pixel(103, 53) = Color{255, 255, 0};
 
-        Render_Circle(&canvas, 800, 200, 100, {0, 255, 0});
-        Render_Circle(&canvas, 950, 200,  50, {0, 0, 255});
+        Render_Circle(&canvas, 200, 200, 50, {0, 255, 0});
+        Render_Circle(&canvas, 275, 200, 25, {0, 0, 255});
+    #endif
 
-        Render_AAB (&canvas, int(paddle_x + 0.5f), 300, 160, 40, {255, 0, 0});
+        Render_AAB(
+            &canvas,
+            Round(state_paddle_pos.x), Round(state_paddle_pos.y),
+            config_paddle_default_width, config_paddle_default_height,
+            {255, 0, 0}
+        );
+
+        Render_Circle(
+            &canvas,
+            Round(state_ball_pos.x), Round(state_ball_pos.y),
+            Round(config_ball_default_radius),
+            {255, 255, 255}
+        );
 
         SDL_UnlockTexture(tex);
 
@@ -192,21 +174,26 @@ int main (int argc, char * argv []) {
         frame_count += 1;
         unsigned t1 = SDL_GetTicks();
         if (t1 - t0 >= 1 * 1000) {
-            ::printf("Average FPS = %5.1f, average frame time = %5.1f ms\r"
+            ::printf("FPS = %5.1f, frame time = %5.2f ms, wastage = %5.2f ms\r"
                 , double(frame_count) / (t1 - t0) * 1000
                 , double(t1 - t0) / frame_count
+                , wastage / frame_count
             );
             t0 = t1;
             frame_count = 0;
+            wastage = 0;
         }
 
         // Waste the rest of the frame time...
         double now_s = inv_pfc_freq * SDL_GetPerformanceCounter();
+        double waste_start = now_s;
         while (now_s < next_frame_start_s) {
             SDL_Delay(0);
+            //std::this_thread::yield();
             now_s = inv_pfc_freq * SDL_GetPerformanceCounter();
         }
         next_frame_start_s += target_frame_time_s;
+        wastage += 1000 * (now_s - waste_start);
     }
     ::printf("\n");
 
