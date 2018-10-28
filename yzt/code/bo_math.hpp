@@ -52,7 +52,7 @@ inline Vec2 Clamp (Vec2 v, Vec2 min, Vec2 max) {return {Clamp(v.x, min.x, max.x)
 
 struct SegmentCollisionResult {
     bool exists;
-    Real param;
+    Real ta, tb;
 };
 
 SegmentCollisionResult Collides_SegmentToSegment (Point A0, Point A1, Point B0, Point B1) {
@@ -63,7 +63,11 @@ SegmentCollisionResult Collides_SegmentToSegment (Point A0, Point A1, Point B0, 
     if (d != 0) {
         auto P = B0 - A0;
         ret.exists = true;
-        ret.param = (E.x * P.y - E.y * P.x) / d;
+        ret.ta = (E.x * P.y - E.y * P.x) / d;
+        if (E.x == 0)
+            ret.tb = (-P.y + ret.ta * D.y) / E.y;
+        else
+            ret.tb = (-P.x + ret.ta * D.x) / E.x;   // Can still be NaN or something.
     }
     return ret;
 }

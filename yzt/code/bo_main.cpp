@@ -18,13 +18,13 @@ int main (int argc, char * argv []) {
     bool input_action = false;
     bool input_exit = false;
 
-    float config_paddle_default_speed = 750.0f;
+    float config_paddle_default_speed = 1000.0f;
     int config_paddle_default_width = 150;
     int config_paddle_default_height = 30;
     float config_paddle_default_y = 0.90f;
     float config_ball_default_radius = 10.0f;
-    float config_ball_default_speed = 100000.0f;
-    int config_target_fps = 1200;
+    float config_ball_default_speed = 30.0f;
+    int config_target_fps = 3;
     int config_window_height = 960;
     float config_aspect_ratio = 3.0f / 4.0f;   //9.0f / 16;
 
@@ -91,32 +91,49 @@ int main (int argc, char * argv []) {
 
         // Do the update...
         state_paddle_pos.x += state_movement * config_paddle_default_speed * float(target_frame_time_s);
+        state_paddle_pos.x = Clamp(state_paddle_pos.x, 0, Real(window_width - config_paddle_default_width));
+
         if (!state_ball_moving) {
             state_ball_pos = state_paddle_pos + Vec2{config_paddle_default_width / 2.0f, -config_ball_default_radius};
         } else {
-            auto ball_final_pos = state_ball_pos + state_ball_dir * (config_ball_default_speed * float(target_frame_time_s));
+            auto ball_intended_pos = state_ball_pos + state_ball_dir * (config_ball_default_speed * float(target_frame_time_s));
 
-            // Detect and handle collisions...
+            // Detect and handle collisions... Method 1!
             Point wall_min = {0, 0};
             Point wall_max = {Real(window_width), Real(window_height)};
 
             wall_min += config_ball_default_radius;
             wall_max -= config_ball_default_radius;
 
-            if (ball_final_pos.x < wall_min.x)
+            if (ball_intended_pos.x < wall_min.x)
                 if (state_ball_dir.x < 0)
                     state_ball_dir.x = -state_ball_dir.x;
-            if (ball_final_pos.y < wall_min.y)
+            if (ball_intended_pos.y < wall_min.y)
                 if (state_ball_dir.y < 0)
                     state_ball_dir.y = -state_ball_dir.y;
-            if (ball_final_pos.x > wall_max.x)
+            if (ball_intended_pos.x > wall_max.x)
                 if (state_ball_dir.x > 0)
                     state_ball_dir.x = -state_ball_dir.x;
-            if (ball_final_pos.y > wall_max.y)
+            if (ball_intended_pos.y > wall_max.y)
                 if (state_ball_dir.y > 0)
                     state_ball_dir.y = -state_ball_dir.y;
+            
+            // Detect and handle collisions... Method 2!
+            Real const R = config_ball_default_radius;
+            Point const corners [4] = {
+                {0 + R, 0 + R},                         // top-left
+                {0 + R, window_height - R},             // bottom-left
+                {window_width - R, window_height - R},  // bottom-right
+                {window_width - R, 0 + R},              // top-right
+            };
 
-            state_ball_pos = ball_final_pos;
+            for (int i = 0; i < 4; ++i) {
+                auto res = Collides_SegmentToSegment(state_ball_pos, ball_intended_pos, corners[i], corners[(i + 1) % 4]);
+                if (res.exists && res.ta >= 0 && res.ta <= 1 && res.tb >= 0 && res.tb <= 1)
+                    ::printf("\n%d, %s, %8.3f, %8.3f\n", i, res.exists ? "YES" : "NO ", double(res.ta), double(res.tb));
+            }
+
+            state_ball_pos = ball_intended_pos;
         }
 
 
