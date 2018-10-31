@@ -4,13 +4,18 @@
 
 using Real = float;
 
+inline Real Abs (Real x) {return ::fabsf(x);}
+inline int Abs (int x) {return ::abs(x);}
+
+inline Real Min (Real x, Real y) {return y < x ? y : x;}
+inline Real Max (Real x, Real y) {return y < x ? x : y;}
+
+inline int Min (int x, int y) {return y < x ? y : x;}
+inline int Max (int x, int y) {return y < x ? x : y;}
+
 inline int Round (Real x) {return int(x + 0.5f);}
 inline Real Sqr (Real x) {return x * x;}
 inline Real Sqrt (Real x) {return ::sqrtf(x);}
-inline Real Abs (Real x) {return ::fabsf(x);}
-inline Real Min (Real x, Real y) {return y < x ? y : x;}
-inline Real Max (Real x, Real y) {return y < x ? x : y;}
-inline Real Clamp (Real v, Real min, Real max) {return Min(Max(min, v), max);}
 
 struct Vec2 {
     Real x, y;
@@ -48,7 +53,11 @@ inline Real LengthSq (Vec2 const & a) {return a.x * a.x + a.y * a.y;}
 inline Real Length (Vec2 const & a) {return Sqrt(a.x * a.x + a.y * a.y);}
 inline Vec2 Normalized (Vec2 const & a) {auto inv_len = 1 / Length(a); return {inv_len * a.x, inv_len * a.y};}
 
+inline Real Clamp (Real v, Real min, Real max) {return Min(Max(min, v), max);}
 inline Vec2 Clamp (Vec2 v, Vec2 min, Vec2 max) {return {Clamp(v.x, min.x, max.x), Clamp(v.y, min.y, max.y)};}
+
+inline Real Lerp (Real from, Real to, Real t) {return t * (to - from) + from;}
+inline Vec2 Lerp (Vec2 from, Vec2 to, Real t) {return t * (to - from) + from;}
 
 struct SegmentCollisionResult {
     bool exists;
@@ -70,4 +79,8 @@ SegmentCollisionResult Collides_SegmentToSegment (Point A0, Point A1, Point B0, 
             ret.tb = (-P.x + ret.ta * D.x) / E.x;   // Can still be NaN or something.
     }
     return ret;
+}
+
+inline Vec2 Reflect (Vec2 incidence_vector, Vec2 plane_unit_normal) {
+    return incidence_vector - 2 * Dot(incidence_vector, plane_unit_normal) * plane_unit_normal;
 }

@@ -35,6 +35,22 @@ void Render_LineHoriz (Canvas * canvas, int x0, int x1, int y, Color c) {
     }
 }
 
+void Render_LineVert_Unchecked (Canvas * canvas, int x, int y0, int y1, Color c) {
+    Color * p = canvas->pixel(x, y0);
+    for (int i = y1 - y0; i >= 0; --i, p = (Color *)((byte *)p + canvas->pitch_bytes))
+        *p = c;
+}
+
+void Render_LineVert (Canvas * canvas, int x, int y0, int y1, Color c) {
+    if (canvas && x >= 0 && x < canvas->width) {
+        if (y1 < y0) {auto t = y0; y0 = y1; y1 = t;}
+        if (y0 < 0) y0 = 0;
+        if (y1 > canvas->height - 1) y1 = canvas->height - 1;
+        if (y0 <= y1)
+            Render_LineVert_Unchecked(canvas, x, y0, y1, c);
+    }
+}
+
 void Render_AAB (Canvas * canvas, int x0, int y0, int w, int h, Color c) {
     if (canvas && w > 0 && h > 0 && x0 < canvas->width && y0 < canvas->height && x0 + w >= 0 && y0 + h >= 0) {
         if (x0 < 0) {w += x0; x0 = 0;}
@@ -66,5 +82,58 @@ void Render_Circle (Canvas * canvas, int x, int y, int r, Color c) {
         Render_LineHoriz(canvas, x - r, x + r, y, c);
         Render_Pixel(canvas, x, y + r, c);
         Render_Pixel(canvas, x, y - r, c);
+    }
+}
+
+void Render_Line_XMajor (Canvas * canvas, int x0, int y0, int x1, int y1, Color c) {
+    // assert(x1 > x0)
+    auto step = Abs(float(y1 - y0) / (x1 - x0));
+    auto error = 0.5f;
+    int dir = (y1 < y0 ? -1 : 1);
+    for (int x = x0, y = y0; x < x1; ++x) {
+        Render_Pixel(canvas, x, y, c);
+        error += step;
+        if (error >= 1.0f) {
+            error -= 1.0f;
+            y += dir;
+        }
+    }
+    Render_Pixel(canvas, x1, y1, c);
+}
+
+void Render_Line_YMajor (Canvas * canvas, int x0, int y0, int x1, int y1, Color c) {
+    // assert(y1 > y0)
+    auto step = Abs(float(x1 - x0) / (y1 - y0));
+    auto error = 0.5f;
+    int dir = (x1 < x0 ? -1 : 1);
+    for (int y = y0, x = x0; y < y1; ++y) {
+        Render_Pixel(canvas, x, y, c);
+        error += step;
+        if (error >= 1.0f) {
+            error -= 1.0f;
+            x += dir;
+        }
+    }
+    Render_Pixel(canvas, x1, y1, c);
+}
+
+// Soooo bad!
+void Render_Line (Canvas * canvas, int x0, int y0, int x1, int y1, Color c) {
+    if (canvas) {
+        if (Abs(x1 - x0) < Abs(y1 - y0)) {  // y-major
+            if (y0 < y1)
+                Render_Line_YMajor(canvas, x0, y0, x1, y1, c);
+            else if (y0 > y1)
+                Render_Line_YMajor(canvas, x1, y1, x0, y0, c);
+            else
+                Render_LineHoriz(canvas, x0, x1, y0, c);
+        } else {                            // x-major
+            if (x0 < x1)
+                Render_Line_XMajor(canvas, x0, y0, x1, y1, c);
+            else if (x0 > x1)
+                Render_Line_XMajor(canvas, x1, y1, x0, y0, c);
+            else
+                Render_LineVert(canvas, x0, y0, y1, c);
+        }
     }
 }

@@ -1,5 +1,6 @@
 #include <sdl2/SDL.h>
 #include <cstdio>
+#include <vector>
 //#include <thread>
 
 using byte = unsigned char;
@@ -18,13 +19,13 @@ int main (int argc, char * argv []) {
     bool input_action = false;
     bool input_exit = false;
 
-    float config_paddle_default_speed = 1000.0f;
-    int config_paddle_default_width = 150;
-    int config_paddle_default_height = 30;
-    float config_paddle_default_y = 0.90f;
+    float config_paddle_default_speed = 1200.0f;
+    int config_paddle_default_width = 160;
+    int config_paddle_default_height = 20;
+    float config_paddle_default_y = 0.97f;
     float config_ball_default_radius = 10.0f;
-    float config_ball_default_speed = 30.0f;
-    int config_target_fps = 3;
+    float config_ball_default_speed = 1200.0f;
+    int config_target_fps = 120;
     int config_window_height = 960;
     float config_aspect_ratio = 3.0f / 4.0f;   //9.0f / 16;
 
@@ -50,6 +51,7 @@ int main (int argc, char * argv []) {
     unsigned t0 = SDL_GetTicks();
     unsigned frame_count = 0;
     double wastage = 0;
+    std::vector<Point> history;
     while (!input_exit) {
         // Process pending events...
         input_action = false;
@@ -87,6 +89,9 @@ int main (int argc, char * argv []) {
         if (input_action && !state_ball_moving) {
             state_ball_moving = true;
             state_ball_dir = Normalized({state_movement < 0 ? -1.0f : 1.0f, -1.0f});
+            
+            history.clear();
+            history.push_back(state_ball_pos);
         }
 
         // Do the update...
@@ -96,9 +101,10 @@ int main (int argc, char * argv []) {
         if (!state_ball_moving) {
             state_ball_pos = state_paddle_pos + Vec2{config_paddle_default_width / 2.0f, -config_ball_default_radius};
         } else {
+        #if 0
+            // Detect and handle collisions... Method 1!
             auto ball_intended_pos = state_ball_pos + state_ball_dir * (config_ball_default_speed * float(target_frame_time_s));
 
-            // Detect and handle collisions... Method 1!
             Point wall_min = {0, 0};
             Point wall_max = {Real(window_width), Real(window_height)};
 
@@ -117,25 +123,51 @@ int main (int argc, char * argv []) {
             if (ball_intended_pos.y > wall_max.y)
                 if (state_ball_dir.y > 0)
                     state_ball_dir.y = -state_ball_dir.y;
-            
+
+            state_ball_pos = ball_intended_pos;
+        #else
             // Detect and handle collisions... Method 2!
+            int const N = 4;
             Real const R = config_ball_default_radius;
-            Point const corners [4] = {
+            Point const corners [N] = {
                 {0 + R, 0 + R},                         // top-left
                 {0 + R, window_height - R},             // bottom-left
                 {window_width - R, window_height - R},  // bottom-right
                 {window_width - R, 0 + R},              // top-right
             };
+            Vec2 const normals [N] = {
+                { 1,  0},
+                { 0, -1},
+                {-1,  0},
+                { 0,  1},
+            };
 
-            for (int i = 0; i < 4; ++i) {
-                auto res = Collides_SegmentToSegment(state_ball_pos, ball_intended_pos, corners[i], corners[(i + 1) % 4]);
-                if (res.exists && res.ta >= 0 && res.ta <= 1 && res.tb >= 0 && res.tb <= 1)
-                    ::printf("\n%d, %s, %8.3f, %8.3f\n", i, res.exists ? "YES" : "NO ", double(res.ta), double(res.tb));
-            }
+            Point p = state_ball_pos, q;
+            Vec2 dir = state_ball_dir;
+            float rem = 1.0f;
+            do {
+                q = p + dir * float(rem * config_ball_default_speed * target_frame_time_s);
+                float used = 1.0f;
+                for (int i = 0; i < N; ++i) {
+                    auto res = Collides_SegmentToSegment(p, q, corners[i], corners[(i + 1) % N]);
+                    if (res.exists && res.ta > 0 && res.ta <= 1 && res.tb >= 0 && res.tb <= 1) {
+                        //::printf("\n%d, %s, %10.6f, %10.6f\n", i, res.exists ? "YES" : "NO ", double(res.ta), double(res.tb));
+                        //p = Lerp(p, q, res.ta);
+                        p = Lerp(corners[i], corners[(i + 1) % N], res.tb);
+                        dir = Reflect(dir, normals[i]);
+                        used = res.ta;
+                        history.push_back(p);
+                        break;
+                    }
+                }
+                rem *= (1 - used);
+            } while (rem > 0.0000f);
 
-            state_ball_pos = ball_intended_pos;
+            state_ball_pos = q;
+            state_ball_dir = dir;
+            history.push_back(state_ball_pos);
+        #endif
         }
-
 
         // Do the render...
         Canvas canvas = {};
@@ -167,6 +199,22 @@ int main (int argc, char * argv []) {
         Render_Circle(&canvas, 275, 200, 25, {0, 0, 255});
     #endif
 
+    #if RENDER_BALL_HISTORY
+        for (unsigned i = 1; i < history.size(); ++i) {
+            Render_Line(
+                &canvas,
+                Round(history[i - 1].x), Round(history[i - 1].y),
+                Round(history[i].x), Round(history[i].y),
+                {0, 255, 0}
+            );
+        }
+        for (unsigned i = 0; i < history.size(); ++i) {
+            Render_Circle(&canvas, Round(history[i].x), Round(history[i].y), 3, {0, 255, 255});
+        }
+        //while (history.size() > 10)
+        //    history.erase(history.begin());
+    #endif
+    
         Render_AAB(
             &canvas,
             Round(state_paddle_pos.x), Round(state_paddle_pos.y),
@@ -191,7 +239,7 @@ int main (int argc, char * argv []) {
         frame_count += 1;
         unsigned t1 = SDL_GetTicks();
         if (t1 - t0 >= 1 * 1000) {
-            ::printf("FPS = %5.1f, frame time = %5.2f ms, wastage = %5.2f ms\r"
+            ::printf("FPS = %5.1f, frame time = %5.2f ms, wastage = %5.2f ms                 \r"
                 , double(frame_count) / (t1 - t0) * 1000
                 , double(t1 - t0) / frame_count
                 , wastage / frame_count
