@@ -62,6 +62,9 @@ endif ()
 
 add_executable ("yzt_breakout"    #WIN32
     "code/bo_main.cpp"
+
+    "code/bo_math.hpp"
+    "code/bo_render.hpp"
 )
 target_link_libraries ("yzt_breakout"
     debug
