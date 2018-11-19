@@ -1,14 +1,21 @@
 #include <sdl2/SDL.h>
+#include <cassert>
 #include <cmath>
 #include <cstdio>
+#include <vector>
 
+#if defined(NDEBUG)
+    #define ASSERT(cond, ...)   ((void)(cond))
+#else
+    #define ASSERT(cond, ...)   assert(cond)
+#endif
 using byte = unsigned char;
 
 #include "bo_math.hpp"
 #include "bo_render.hpp"
 
 struct Config {
-    int target_fps = 120;
+    int target_fps = 10;
     int window_width = 600;
     int window_height = 0;
     float window_aspect_ratio = 3.0f / 4.0f;
@@ -61,6 +68,9 @@ int main (int argc, char * argv []) {
     double next_frame_start_s = inv_pfc_freq * SDL_GetPerformanceCounter() + target_frame_time_s;
     double wastage = 0.0;
 
+    //Real theta = 0;
+    std::vector<Point2f> ball_history;
+
     SDL_Event ev = {};
     unsigned t0 = SDL_GetTicks();
     unsigned frame_count = 0;
@@ -104,6 +114,8 @@ int main (int argc, char * argv []) {
         if (input.action && !state.ball_in_movement) {
             state.ball_in_movement = true;
             state.ball_dir = Normalize({(input.movement >= 0 ? 1.0f : -1.0f), -1.0f});
+            ball_history.clear();
+            ball_history.push_back(state.ball_pos);
         }
 
         // Do the update...
@@ -117,20 +129,45 @@ int main (int argc, char * argv []) {
         } else {
             auto bp = state.ball_pos + state.ball_dir * (config.ball_speed * float(target_frame_time_s));
 
-            if (bp.x < 0)
+            if (bp.x < 0 + config.ball_radius)
                 if (state.ball_dir.x < 0)
                     state.ball_dir.x = -state.ball_dir.x;
-            if (bp.x > config.window_width)
+            if (bp.x > config.window_width - config.ball_radius)
                 if (state.ball_dir.x > 0)
                     state.ball_dir.x = -state.ball_dir.x;
-            if (bp.y < 0)
+            if (bp.y < 0 + config.ball_radius)
                 if (state.ball_dir.y < 0)
                     state.ball_dir.y = -state.ball_dir.y;
-            if (bp.y > config.window_height)
+            if (bp.y > config.window_height - config.ball_radius)
                 if (state.ball_dir.y > 0)
                     state.ball_dir.y = -state.ball_dir.y;
 
+            Real const R = config.ball_radius;
+            Point2f const corners [4] = {
+                {0 + R, 0 + R},
+                {0 + R, config.window_height - R},
+                {config.window_width - R, config.window_height - R},
+                {config.window_width - R, 0 + R},
+            };
+            Vec2f const normals [4] = {
+                {+1.0f, 0.0f},
+                { 0.0f,-1.0f},
+                {-1.0f, 0.0f},
+                { 0.0f,+1.0f},
+            };
+            for (int i = 0; i < 4; ++i) {
+                auto r = Intersect_LineLine(state.ball_pos, bp, corners[i], corners[(i + 1) % 4]);
+                if (r.exists && r.l_param > 0 && r.l_param <= 1.0f && r.m_param >= 0 && r.m_param <= 1.0f) {
+                    auto p1 = Lerp(state.ball_pos, bp, r.l_param);
+                    auto p2 = Lerp(corners[i], corners[(i + 1) % 4], r.m_param);
+                    ::printf("\n\n%d - %6.4f (%9.5f,%9.5f) - %6.4f (%9.5f,%9.5f)\n"
+                        , i, r.l_param, p1.x, p1.y, r.m_param, p2.x, p2.y
+                    );
+                }
+            }
+
             state.ball_pos = bp;
+            ball_history.push_back(state.ball_pos);
         }
         
         // Do the render...
@@ -140,6 +177,16 @@ int main (int argc, char * argv []) {
         canvas.height = config.window_height;
 
         Render_Clear(&canvas, {0, 0, 0});
+
+        for (unsigned i = 1; i < ball_history.size(); ++i)
+            Render_Line(
+                &canvas, 
+                Round(ball_history[i - 1].x), Round(ball_history[i - 1].y),
+                Round(ball_history[i - 0].x), Round(ball_history[i - 0].y),
+                {0, 255, 255}
+            );
+        for (auto const & p : ball_history)
+            Render_Circle(&canvas, Round(p.x), Round(p.y), 3, {0, 255, 255});
 
         Render_AAB(
             &canvas,
@@ -154,6 +201,14 @@ int main (int argc, char * argv []) {
             Round(config.ball_radius),
             {0, 255, 0}
         );
+
+        //Render_Line(
+        //    &canvas,
+        //    300, 300,
+        //    Round(300 + 200 * Cos(theta)), Round(300 + 200 * Sin(theta)),
+        //    {0, 255, 255}
+        //);
+        //theta += 0.01f;
 
         SDL_UnlockTexture(tex);
 
