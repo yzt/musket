@@ -15,7 +15,7 @@ using byte = unsigned char;
 #include "bo_render.hpp"
 
 struct Config {
-    int target_fps = 30;
+    int target_fps = 120;
     int window_width = 600;
     int window_height = 0;
     float window_aspect_ratio = 3.0f / 4.0f;
@@ -68,8 +68,9 @@ int main (int argc, char * argv []) {
     double next_frame_start_s = inv_pfc_freq * SDL_GetPerformanceCounter() + target_frame_time_s;
     double wastage = 0.0;
 
-    //Real theta = 0;
+    #if DRAW_BALL_HISTORY
     std::vector<Point2f> ball_history;
+    #endif
 
     SDL_Event ev = {};
     unsigned t0 = SDL_GetTicks();
@@ -114,8 +115,10 @@ int main (int argc, char * argv []) {
         if (input.action && !state.ball_in_movement) {
             state.ball_in_movement = true;
             state.ball_dir = Normalize({(input.movement >= 0 ? 1.0f : -1.0f), -1.0f});
+        #if DRAW_BALL_HISTORY
             ball_history.clear();
             ball_history.push_back(state.ball_pos);
+        #endif
         }
 
         // Do the update...
@@ -131,10 +134,9 @@ int main (int argc, char * argv []) {
                 state.paddle_pos.y - config.ball_radius
             };
         } else {
-            auto bp = state.ball_pos + state.ball_dir * (config.ball_speed * float(target_frame_time_s));
-
         #if 0
             // Method 1: easy and bad
+            auto bp = state.ball_pos + state.ball_dir * (config.ball_speed * float(target_frame_time_s));
             if (bp.x < 0 + config.ball_radius)
                 if (state.ball_dir.x < 0)
                     state.ball_dir.x = -state.ball_dir.x;
@@ -147,9 +149,9 @@ int main (int argc, char * argv []) {
             if (bp.y > config.window_height - config.ball_radius)
                 if (state.ball_dir.y > 0)
                     state.ball_dir.y = -state.ball_dir.y;
+            state.ball_pos = bp;
+            ball_history.push_back(state.ball_pos);
         #endif
-
-            // Method 2: hopefully better
             Real const R = config.ball_radius;
             Point2f const corners [4] = {
                 {0 + R, 0 + R},
@@ -163,6 +165,9 @@ int main (int argc, char * argv []) {
                 {-1.0f, 0.0f},
                 { 0.0f,+1.0f},
             };
+        #if 0
+            // Method 2: hopefully better
+            auto bp = state.ball_pos + state.ball_dir * (config.ball_speed * float(target_frame_time_s));
             for (int i = 0; i < 4; ++i) {
                 auto r = Intersect_LineLine(state.ball_pos, bp, corners[i], corners[(i + 1) % 4]);
                 if (r.exists && r.l_param > 0 && r.l_param <= 1.0f && r.m_param >= 0 && r.m_param <= 1.0f) {
@@ -183,9 +188,50 @@ int main (int argc, char * argv []) {
                     break;
                 }
             }
-
             state.ball_pos = bp;
             ball_history.push_back(state.ball_pos);
+        #endif
+            auto bp = state.ball_pos;
+            auto bd = state.ball_dir;
+            Real rem = 1.0f;
+            while (rem > 0.001f) {
+                auto ep = bp + bd * (config.ball_speed * float(target_frame_time_s) * rem);
+                bool collides_with_walls = false;
+                for (int i = 0; i < 4; ++i) {
+                    auto r = Intersect_LineLine(bp, ep, corners[i], corners[(i + 1) % 4]);
+                    if (r.exists && r.l_param > 0 && r.l_param <= 1.0f && r.m_param >= 0 && r.m_param <= 1.0f) {
+                        auto cp = Lerp(corners[i], corners[(i + 1) % 4], r.m_param);
+                        auto cn = normals[i];
+                        auto cd = Normalize(Reflect(bd, cn));
+                        auto ct = r.l_param;
+
+                        bp = cp;
+                        bd = cd;
+                    #if DRAW_BALL_HISTORY
+                        ball_history.push_back(cp);
+                    #endif
+
+                        rem -= ct * rem;
+                        //rem = (1 - ct) * rem;
+                        collides_with_walls = true;
+
+                        if (1 == i) {
+                            // Lost the ball!
+                            state.ball_in_movement = false;
+                        }
+                        break;
+                    }
+                }
+                if (!collides_with_walls) {
+                    bp = ep;
+                    rem = 0.0f;
+                }
+            }
+            state.ball_pos = bp;
+            state.ball_dir = bd;
+        #if DRAW_BALL_HISTORY
+            ball_history.push_back(bp);
+        #endif
         }
         
         // Do the render...
@@ -196,6 +242,7 @@ int main (int argc, char * argv []) {
 
         Render_Clear(&canvas, {0, 0, 0});
 
+    #if DRAW_BALL_HISTORY
         for (unsigned i = 1; i < ball_history.size(); ++i)
             Render_Line(
                 &canvas, 
@@ -205,6 +252,7 @@ int main (int argc, char * argv []) {
             );
         for (auto const & p : ball_history)
             Render_Circle(&canvas, Round(p.x), Round(p.y), 3, {0, 255, 255});
+    #endif
 
         Render_AAB(
             &canvas,
@@ -219,14 +267,6 @@ int main (int argc, char * argv []) {
             Round(config.ball_radius),
             {0, 255, 0}
         );
-
-        //Render_Line(
-        //    &canvas,
-        //    300, 300,
-        //    Round(300 + 200 * Cos(theta)), Round(300 + 200 * Sin(theta)),
-        //    {0, 255, 255}
-        //);
-        //theta += 0.01f;
 
         SDL_UnlockTexture(tex);
 
@@ -263,7 +303,6 @@ int main (int argc, char * argv []) {
         next_frame_start_s += target_frame_time_s;
         wastage += now_s - waste_start;
     }
-    ::printf("\n");
 
     SDL_DestroyTexture(tex);
     SDL_DestroyRenderer(renderer);
