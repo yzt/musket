@@ -15,7 +15,7 @@ using byte = unsigned char;
 #include "bo_render.hpp"
 
 struct Config {
-    int target_fps = 10;
+    int target_fps = 30;
     int window_width = 600;
     int window_height = 0;
     float window_aspect_ratio = 3.0f / 4.0f;
@@ -120,6 +120,10 @@ int main (int argc, char * argv []) {
 
         // Do the update...
         state.paddle_pos.x += input.movement * config.paddle_speed * float(target_frame_time_s);
+        if (state.paddle_pos.x < 0)
+            state.paddle_pos.x = 0;
+        if (state.paddle_pos.x > config.window_width - config.paddle_dims.x)
+            state.paddle_pos.x = config.window_width - config.paddle_dims.x;
         
         if (!state.ball_in_movement) {
             state.ball_pos = {
@@ -129,6 +133,8 @@ int main (int argc, char * argv []) {
         } else {
             auto bp = state.ball_pos + state.ball_dir * (config.ball_speed * float(target_frame_time_s));
 
+        #if 0
+            // Method 1: easy and bad
             if (bp.x < 0 + config.ball_radius)
                 if (state.ball_dir.x < 0)
                     state.ball_dir.x = -state.ball_dir.x;
@@ -141,7 +147,9 @@ int main (int argc, char * argv []) {
             if (bp.y > config.window_height - config.ball_radius)
                 if (state.ball_dir.y > 0)
                     state.ball_dir.y = -state.ball_dir.y;
+        #endif
 
+            // Method 2: hopefully better
             Real const R = config.ball_radius;
             Point2f const corners [4] = {
                 {0 + R, 0 + R},
@@ -160,9 +168,19 @@ int main (int argc, char * argv []) {
                 if (r.exists && r.l_param > 0 && r.l_param <= 1.0f && r.m_param >= 0 && r.m_param <= 1.0f) {
                     auto p1 = Lerp(state.ball_pos, bp, r.l_param);
                     auto p2 = Lerp(corners[i], corners[(i + 1) % 4], r.m_param);
-                    ::printf("\n\n%d - %6.4f (%9.5f,%9.5f) - %6.4f (%9.5f,%9.5f)\n"
+                    ::printf("%d - %6.4f (%11.7f,%11.7f) - %6.4f (%11.7f,%11.7f)\n"
                         , i, r.l_param, p1.x, p1.y, r.m_param, p2.x, p2.y
                     );
+
+                    auto cp = p2;
+                    auto ct = r.l_param;
+                    auto new_dir = Normalize(Reflect(state.ball_dir, normals[i]));
+                    auto new_pos = cp + new_dir * ((1 - ct) * config.ball_speed * float(target_frame_time_s));
+                   
+                    bp = new_pos;
+                    state.ball_dir = new_dir;
+                    ball_history.push_back(cp);
+                    break;
                 }
             }
 
@@ -220,12 +238,16 @@ int main (int argc, char * argv []) {
         frame_count += 1;
         unsigned t1 = SDL_GetTicks();
         if (t1 - t0 >= 1 * 1000) {
-            ::printf("FPS = %0.2f, frame time = %0.2fms, wastage = %0.2fms (%0.1f%%)           \r"
+            char buffer [200];
+            ::snprintf(buffer, sizeof(buffer)
+                , "BrykOut    [FPS = %7.2f, frame time = %7.2fms, wastage = %7.2fms (%4.1f%%)]"
                 , double(frame_count) / (t1 - t0) * 1000
                 , double(t1 - t0) / frame_count
                 , 1000 * wastage / frame_count
                 , (1000 * wastage) / double(t1 - t0) * 100
             );
+            SDL_SetWindowTitle(window, buffer);
+
             t0 = t1;
             frame_count = 0;
             wastage = 0;
