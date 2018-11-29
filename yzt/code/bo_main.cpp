@@ -4,6 +4,8 @@
 #include <cstdio>
 #include <vector>
 
+#define DRAW_BALL_HISTORY
+
 #if defined(NDEBUG)
     #define ASSERT(cond, ...)   ((void)(cond))
 #else
@@ -21,10 +23,10 @@ struct Config {
     float window_aspect_ratio = 3.0f / 4.0f;
 
     float paddle_speed = 1000.0f;
-    float paddle_vert_pos = 0.95f;
-    Vec2f paddle_dims = {160, 20};
-    float ball_radius = 10.0f;
-    float ball_speed = 2000.0f;
+    float paddle_vert_pos = 0.90f;
+    Vec2f paddle_half_dims = {80, 10};
+    float ball_radius = 42.0f;  //10.0f;
+    float ball_speed = 1200.0f;
 };
 
 struct Input {
@@ -37,11 +39,76 @@ struct Input {
 };
 
 struct State {
-    Point2f paddle_pos = {0, 300};
+    Point2f paddle_pos = {300, 300};
     Point2f ball_pos = {};
     Vec2f ball_dir = {};
     bool ball_in_movement = false;
 };
+
+
+struct CollisionResult {
+    bool exists;
+    Real param;
+    Point2f point;
+    Vec2f normal;
+};
+
+CollisionResult Collide_BallPaddle (
+    Point2f const & ball_pos, Real ball_radius, Vec2f const & ball_movement,   // ball_dir * ball_speed * time_step
+    Point2f const & paddle_pos, Vec2f const & paddle_half_dims, Vec2f const & paddle_movement
+) {
+    CollisionResult ret = {};
+    //ret.param = 2.0f;   // +Inf
+    auto movement = ball_movement - paddle_movement;
+    auto ball_expected = ball_pos + movement;
+
+    Point2f corners [4] = {
+        {paddle_pos.x - paddle_half_dims.x, paddle_pos.y - paddle_half_dims.y},
+        {paddle_pos.x - paddle_half_dims.x, paddle_pos.y + paddle_half_dims.y},
+        {paddle_pos.x + paddle_half_dims.x, paddle_pos.y + paddle_half_dims.y},
+        {paddle_pos.x + paddle_half_dims.x, paddle_pos.y - paddle_half_dims.y},
+    };
+    Vec2f normals [4] = {
+        {-1.0f, 0},
+        {0, +1.0f},
+        {+1.0f, 0},
+        {0, -1.0f},
+    };
+    for (int i = 0; i < 4; ++i) {
+        auto displacement = ball_radius * normals[i];
+        auto m0 = corners[i] + displacement;
+        auto m1 = corners[(i + 1) % 4] + displacement;
+        auto c = Intersect_LineLine(ball_pos, ball_expected, m0, m1);
+        if (c.exists && c.l_param > 0 && c.l_param <= 1.0f && c.m_param >= 0 && c.m_param <= 1.0f) {
+            if (!ret.exists || c.l_param < ret.param) {
+                ret.exists = true;
+                ret.param = c.l_param;
+                //ret.point = Lerp(m0, m1, c.m_param);
+                ret.point = Lerp(ball_pos, ball_pos + ball_movement, c.l_param);
+                ret.normal = normals[i];
+            }
+        }
+    }
+
+    for (int i = 0; i < 4; ++i) {
+        auto c = Intersect_LineCircle(ball_pos, ball_expected, corners[i], ball_radius);
+        if (c.count >= 2) {
+            if (c.param1 <= 0 || (c.param2 > 0 && c.param2 < c.param1))
+                c.param1 = c.param2;
+            c.count = 1;
+        }
+        if (c.count >= 1 && c.param1 > 0 && c.param1 <= 1.0f) {
+            if (!ret.exists || c.param1 < ret.param) {
+                ret.exists = true;
+                ret.param = c.param1;
+                ret.point = Lerp(ball_pos, ball_pos + ball_movement, c.param1);
+                ret.normal = Normalize(ret.point - corners[i]);
+            }
+        }
+    }
+
+    return ret;
+}
 
 int main (int argc, char * argv []) {
     Config config;
@@ -61,14 +128,17 @@ int main (int argc, char * argv []) {
     SDL_Texture * tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ARGB8888, SDL_TEXTUREACCESS_STREAMING, config.window_width, config.window_height);
     SDL_assert(tex);
 
-    state.paddle_pos.y = config.paddle_vert_pos * config.window_height;
+    state.paddle_pos = {
+        0.5f * config.window_width,
+        config.paddle_vert_pos * config.window_height
+    };
 
     double target_frame_time_s = 1.0 / config.target_fps;
     double const inv_pfc_freq = 1.0 / SDL_GetPerformanceFrequency();
     double next_frame_start_s = inv_pfc_freq * SDL_GetPerformanceCounter() + target_frame_time_s;
     double wastage = 0.0;
 
-    #if DRAW_BALL_HISTORY
+    #if defined(DRAW_BALL_HISTORY)
     std::vector<Point2f> ball_history;
     #endif
 
@@ -115,43 +185,26 @@ int main (int argc, char * argv []) {
         if (input.action && !state.ball_in_movement) {
             state.ball_in_movement = true;
             state.ball_dir = Normalize({(input.movement >= 0 ? 1.0f : -1.0f), -1.0f});
-        #if DRAW_BALL_HISTORY
+        #if defined(DRAW_BALL_HISTORY)
             ball_history.clear();
             ball_history.push_back(state.ball_pos);
         #endif
         }
 
         // Do the update...
-        state.paddle_pos.x += input.movement * config.paddle_speed * float(target_frame_time_s);
-        if (state.paddle_pos.x < 0)
-            state.paddle_pos.x = 0;
-        if (state.paddle_pos.x > config.window_width - config.paddle_dims.x)
-            state.paddle_pos.x = config.window_width - config.paddle_dims.x;
+        State next = state;
+        next.paddle_pos.x += input.movement * config.paddle_speed * float(target_frame_time_s);
+        if (next.paddle_pos.x < config.paddle_half_dims.x)
+            next.paddle_pos.x = config.paddle_half_dims.x;
+        if (next.paddle_pos.x > config.window_width - config.paddle_half_dims.x)
+            next.paddle_pos.x = config.window_width - config.paddle_half_dims.x;
         
         if (!state.ball_in_movement) {
-            state.ball_pos = {
-                state.paddle_pos.x + config.paddle_dims.x / 2,
-                state.paddle_pos.y - config.ball_radius
+            next.ball_pos = {
+                next.paddle_pos.x,
+                next.paddle_pos.y - config.paddle_half_dims.y - config.ball_radius
             };
         } else {
-        #if 0
-            // Method 1: easy and bad
-            auto bp = state.ball_pos + state.ball_dir * (config.ball_speed * float(target_frame_time_s));
-            if (bp.x < 0 + config.ball_radius)
-                if (state.ball_dir.x < 0)
-                    state.ball_dir.x = -state.ball_dir.x;
-            if (bp.x > config.window_width - config.ball_radius)
-                if (state.ball_dir.x > 0)
-                    state.ball_dir.x = -state.ball_dir.x;
-            if (bp.y < 0 + config.ball_radius)
-                if (state.ball_dir.y < 0)
-                    state.ball_dir.y = -state.ball_dir.y;
-            if (bp.y > config.window_height - config.ball_radius)
-                if (state.ball_dir.y > 0)
-                    state.ball_dir.y = -state.ball_dir.y;
-            state.ball_pos = bp;
-            ball_history.push_back(state.ball_pos);
-        #endif
             Real const R = config.ball_radius;
             Point2f const corners [4] = {
                 {0 + R, 0 + R},
@@ -165,35 +218,28 @@ int main (int argc, char * argv []) {
                 {-1.0f, 0.0f},
                 { 0.0f,+1.0f},
             };
-        #if 0
-            // Method 2: hopefully better
-            auto bp = state.ball_pos + state.ball_dir * (config.ball_speed * float(target_frame_time_s));
-            for (int i = 0; i < 4; ++i) {
-                auto r = Intersect_LineLine(state.ball_pos, bp, corners[i], corners[(i + 1) % 4]);
-                if (r.exists && r.l_param > 0 && r.l_param <= 1.0f && r.m_param >= 0 && r.m_param <= 1.0f) {
-                    auto p1 = Lerp(state.ball_pos, bp, r.l_param);
-                    auto p2 = Lerp(corners[i], corners[(i + 1) % 4], r.m_param);
-                    ::printf("%d - %6.4f (%11.7f,%11.7f) - %6.4f (%11.7f,%11.7f)\n"
-                        , i, r.l_param, p1.x, p1.y, r.m_param, p2.x, p2.y
-                    );
 
-                    auto cp = p2;
-                    auto ct = r.l_param;
-                    auto new_dir = Normalize(Reflect(state.ball_dir, normals[i]));
-                    auto new_pos = cp + new_dir * ((1 - ct) * config.ball_speed * float(target_frame_time_s));
-                   
-                    bp = new_pos;
-                    state.ball_dir = new_dir;
-                    ball_history.push_back(cp);
-                    break;
-                }
-            }
-            state.ball_pos = bp;
-            ball_history.push_back(state.ball_pos);
-        #endif
-            auto bp = state.ball_pos;
-            auto bd = state.ball_dir;
+            //next.ball_pos = state.ball_pos + state.ball_dir * (config.ball_speed * float(target_frame_time_s));
+
             Real rem = 1.0f;
+            auto bp = next.ball_pos;
+            auto bd = next.ball_dir;
+
+            //if (next.ball_pos.y + config.ball_radius <= next.paddle_pos.y - config.paddle_half_dims.y) {
+                auto paddle_collision = Collide_BallPaddle(
+                    state.ball_pos, config.ball_radius, state.ball_dir * (config.ball_speed * float(target_frame_time_s) * rem),
+                    state.paddle_pos, config.paddle_half_dims, next.paddle_pos - state.paddle_pos
+                );
+                if (paddle_collision.exists) {
+                    bp = paddle_collision.point;
+                    bd = Normalize(Reflect(bd, paddle_collision.normal));
+                    rem -= paddle_collision.param * rem;
+                    #if defined(DRAW_BALL_HISTORY)
+                        ball_history.push_back(paddle_collision.point);
+                    #endif
+                }
+            //}
+
             while (rem > 0.001f) {
                 auto ep = bp + bd * (config.ball_speed * float(target_frame_time_s) * rem);
                 bool collides_with_walls = false;
@@ -207,7 +253,7 @@ int main (int argc, char * argv []) {
 
                         bp = cp;
                         bd = cd;
-                    #if DRAW_BALL_HISTORY
+                    #if defined(DRAW_BALL_HISTORY)
                         ball_history.push_back(cp);
                     #endif
 
@@ -217,7 +263,7 @@ int main (int argc, char * argv []) {
 
                         if (1 == i) {
                             // Lost the ball!
-                            state.ball_in_movement = false;
+                            next.ball_in_movement = false;
                         }
                         break;
                     }
@@ -227,13 +273,15 @@ int main (int argc, char * argv []) {
                     rem = 0.0f;
                 }
             }
-            state.ball_pos = bp;
-            state.ball_dir = bd;
-        #if DRAW_BALL_HISTORY
+            next.ball_pos = bp;
+            next.ball_dir = bd;
+        #if defined(DRAW_BALL_HISTORY)
             ball_history.push_back(bp);
         #endif
         }
         
+        state = next;
+
         // Do the render...
         Canvas canvas = {};
         SDL_LockTexture(tex, nullptr, &canvas.pixels_raw, &canvas.pitch_bytes);
@@ -242,7 +290,7 @@ int main (int argc, char * argv []) {
 
         Render_Clear(&canvas, {0, 0, 0});
 
-    #if DRAW_BALL_HISTORY
+    #if defined(DRAW_BALL_HISTORY)
         for (unsigned i = 1; i < ball_history.size(); ++i)
             Render_Line(
                 &canvas, 
@@ -251,13 +299,13 @@ int main (int argc, char * argv []) {
                 {0, 255, 255}
             );
         for (auto const & p : ball_history)
-            Render_Circle(&canvas, Round(p.x), Round(p.y), 3, {0, 255, 255});
+            Render_Circle(&canvas, Round(p.x), Round(p.y), 2, {0, 255, 255});
     #endif
 
         Render_AAB(
             &canvas,
-            Round(state.paddle_pos.x), Round(state.paddle_pos.y),
-            Round(config.paddle_dims.x), Round(config.paddle_dims.y),
+            Round(state.paddle_pos.x - config.paddle_half_dims.x), Round(state.paddle_pos.y - config.paddle_half_dims.y),
+            Round(2 * config.paddle_half_dims.x), Round(2 * config.paddle_half_dims.y),
             {255, 0, 0}
         );
 
@@ -276,19 +324,19 @@ int main (int argc, char * argv []) {
 
         // FPS counter ...
         frame_count += 1;
-        unsigned t1 = SDL_GetTicks();
-        if (t1 - t0 >= 1 * 1000) {
+        unsigned param1 = SDL_GetTicks();
+        if (param1 - t0 >= 1 * 1000) {
             char buffer [200];
             ::snprintf(buffer, sizeof(buffer)
                 , "BrykOut    [FPS = %7.2f, frame time = %7.2fms, wastage = %7.2fms (%4.1f%%)]"
-                , double(frame_count) / (t1 - t0) * 1000
-                , double(t1 - t0) / frame_count
+                , double(frame_count) / (param1 - t0) * 1000
+                , double(param1 - t0) / frame_count
                 , 1000 * wastage / frame_count
-                , (1000 * wastage) / double(t1 - t0) * 100
+                , (1000 * wastage) / double(param1 - t0) * 100
             );
             SDL_SetWindowTitle(window, buffer);
 
-            t0 = t1;
+            t0 = param1;
             frame_count = 0;
             wastage = 0;
         }
