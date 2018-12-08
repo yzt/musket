@@ -4,7 +4,7 @@
 #include <cstdio>
 #include <vector>
 
-#define DRAW_BALL_HISTORY
+//#define DRAW_BALL_HISTORY
 
 #if defined(NDEBUG)
     #define ASSERT(cond, ...)   ((void)(cond))
@@ -25,8 +25,11 @@ struct Config {
     float paddle_speed = 1000.0f;
     float paddle_vert_pos = 0.90f;
     Vec2f paddle_half_dims = {80, 10};
-    float ball_radius = 42.0f;  //10.0f;
-    float ball_speed = 1200.0f;
+    float ball_radius = 10.0f;
+    float ball_speed = 700.0f;
+
+    Vec2f brick_half_dims = {40, 20};
+    Color brick_color = {50, 50, 250};
 };
 
 struct Input {
@@ -45,6 +48,10 @@ struct State {
     bool ball_in_movement = false;
 };
 
+struct Brick {
+    Point2f pos;
+};
+
 
 struct CollisionResult {
     bool exists;
@@ -53,20 +60,20 @@ struct CollisionResult {
     Vec2f normal;
 };
 
-CollisionResult Collide_BallPaddle (
-    Point2f const & ball_pos, Real ball_radius, Vec2f const & ball_movement,   // ball_dir * ball_speed * time_step
-    Point2f const & paddle_pos, Vec2f const & paddle_half_dims, Vec2f const & paddle_movement
+CollisionResult Collide_CircleAAB (
+    Point2f const & circle_pos, Real circle_radius, Vec2f const & circle_movement,   // ball_dir * ball_speed * time_step
+    Point2f const & aab_pos, Vec2f const & aab_half_dims, Vec2f const & aab_movement
 ) {
     CollisionResult ret = {};
     //ret.param = 2.0f;   // +Inf
-    auto movement = ball_movement - paddle_movement;
-    auto ball_expected = ball_pos + movement;
+    auto movement = circle_movement - aab_movement;
+    auto ball_expected = circle_pos + movement;
 
     Point2f corners [4] = {
-        {paddle_pos.x - paddle_half_dims.x, paddle_pos.y - paddle_half_dims.y},
-        {paddle_pos.x - paddle_half_dims.x, paddle_pos.y + paddle_half_dims.y},
-        {paddle_pos.x + paddle_half_dims.x, paddle_pos.y + paddle_half_dims.y},
-        {paddle_pos.x + paddle_half_dims.x, paddle_pos.y - paddle_half_dims.y},
+        {aab_pos.x - aab_half_dims.x, aab_pos.y - aab_half_dims.y},
+        {aab_pos.x - aab_half_dims.x, aab_pos.y + aab_half_dims.y},
+        {aab_pos.x + aab_half_dims.x, aab_pos.y + aab_half_dims.y},
+        {aab_pos.x + aab_half_dims.x, aab_pos.y - aab_half_dims.y},
     };
     Vec2f normals [4] = {
         {-1.0f, 0},
@@ -75,23 +82,23 @@ CollisionResult Collide_BallPaddle (
         {0, -1.0f},
     };
     for (int i = 0; i < 4; ++i) {
-        auto displacement = ball_radius * normals[i];
+        auto displacement = circle_radius * normals[i];
         auto m0 = corners[i] + displacement;
         auto m1 = corners[(i + 1) % 4] + displacement;
-        auto c = Intersect_LineLine(ball_pos, ball_expected, m0, m1);
+        auto c = Intersect_LineLine(circle_pos, ball_expected, m0, m1);
         if (c.exists && c.l_param > 0 && c.l_param <= 1.0f && c.m_param >= 0 && c.m_param <= 1.0f) {
             if (!ret.exists || c.l_param < ret.param) {
                 ret.exists = true;
                 ret.param = c.l_param;
                 //ret.point = Lerp(m0, m1, c.m_param);
-                ret.point = Lerp(ball_pos, ball_pos + ball_movement, c.l_param);
+                ret.point = Lerp(circle_pos, circle_pos + circle_movement, c.l_param);
                 ret.normal = normals[i];
             }
         }
     }
 
     for (int i = 0; i < 4; ++i) {
-        auto c = Intersect_LineCircle(ball_pos, ball_expected, corners[i], ball_radius);
+        auto c = Intersect_LineCircle(circle_pos, ball_expected, corners[i], circle_radius);
         if (c.count >= 2) {
             if (c.param1 <= 0 || (c.param2 > 0 && c.param2 < c.param1))
                 c.param1 = c.param2;
@@ -101,7 +108,7 @@ CollisionResult Collide_BallPaddle (
             if (!ret.exists || c.param1 < ret.param) {
                 ret.exists = true;
                 ret.param = c.param1;
-                ret.point = Lerp(ball_pos, ball_pos + ball_movement, c.param1);
+                ret.point = Lerp(circle_pos, circle_pos + circle_movement, c.param1);
                 ret.normal = Normalize(ret.point - corners[i]);
             }
         }
@@ -141,6 +148,16 @@ int main (int argc, char * argv []) {
     #if defined(DRAW_BALL_HISTORY)
     std::vector<Point2f> ball_history;
     #endif
+
+    std::vector<Brick> bricks;
+    for (int i = 0; i < 8; ++i) {
+        for (int j = 0; j < 6; ++j) {
+            bricks.push_back({Point2f{
+                config.brick_half_dims.x + 48.0f + 84.0f * j,
+                config.brick_half_dims.y + 40.0f + 44.0f * i
+            }});
+        }
+    }
 
     SDL_Event ev = {};
     unsigned t0 = SDL_GetTicks();
@@ -226,7 +243,7 @@ int main (int argc, char * argv []) {
             auto bd = next.ball_dir;
 
             //if (next.ball_pos.y + config.ball_radius <= next.paddle_pos.y - config.paddle_half_dims.y) {
-                auto paddle_collision = Collide_BallPaddle(
+                auto paddle_collision = Collide_CircleAAB(
                     state.ball_pos, config.ball_radius, state.ball_dir * (config.ball_speed * float(target_frame_time_s) * rem),
                     state.paddle_pos, config.paddle_half_dims, next.paddle_pos - state.paddle_pos
                 );
@@ -269,10 +286,42 @@ int main (int argc, char * argv []) {
                     }
                 }
                 if (!collides_with_walls) {
-                    bp = ep;
-                    rem = 0.0f;
+                    //bp = ep;
+                    //rem = 0.0f;
+                    break;
                 }
             }
+
+            // Collision(s) with bricks...
+            while (rem > 0.001f) {
+                auto bm = bd * (config.ball_speed * float(target_frame_time_s) * rem);
+                bool collides_with_bricks = false;
+                for (unsigned i = 0, n = unsigned(bricks.size()); i < n; ++i) {
+                    auto brick_collision = Collide_CircleAAB(
+                        bp, config.ball_radius, bm,
+                        bricks[i].pos, config.brick_half_dims, {0.0f, 0.0f}
+                    );
+                    if (brick_collision.exists) {
+                        bp = brick_collision.point;
+                        bd = Normalize(Reflect(bd, brick_collision.normal));
+                        rem -= brick_collision.param * rem;
+                        #if defined(DRAW_BALL_HISTORY)
+                            ball_history.push_back(brick_collision.point);
+                        #endif
+
+                        bricks.erase(bricks.begin() + i);
+
+                        collides_with_bricks = true;
+                        break;
+                    }
+                }
+                if (!collides_with_bricks) {
+                    bp = bp + bm;
+                    rem = 0.0f;
+                    break;
+                }
+            }
+
             next.ball_pos = bp;
             next.ball_dir = bd;
         #if defined(DRAW_BALL_HISTORY)
@@ -308,6 +357,14 @@ int main (int argc, char * argv []) {
             Round(2 * config.paddle_half_dims.x), Round(2 * config.paddle_half_dims.y),
             {255, 0, 0}
         );
+
+        for (auto const & b : bricks)
+            Render_AAB(
+                &canvas,
+                Round(b.pos.x - config.brick_half_dims.x), Round(b.pos.y - config.brick_half_dims.y),
+                Round(2 * config.brick_half_dims.x), Round(2 * config.brick_half_dims.y),
+                config.brick_color
+            );
 
         Render_Circle(
             &canvas,
